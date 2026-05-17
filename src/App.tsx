@@ -219,10 +219,14 @@ function LoginPage({ accounts, setAccounts, pendingAccounts, setPendingAccounts,
   const [ok,setOk]       = useState("");
 
   const doLogin = () => {
-    const acc = accounts.find(a => a.username === form.username && a.password === form.password);
-    if (!acc)         { setError("Identifiant ou mot de passe incorrect."); return; }
-    if (acc.banned)   { setError("Votre compte a été banni de l'organisation."); return; }
-    if (!acc.approved){ setError("Votre demande est en attente de validation par un administrateur."); return; }
+    // Cherche dans les comptes chargés depuis Supabase
+    const acc = accounts.find(a =>
+      (a.username || '').trim().toLowerCase() === form.username.trim().toLowerCase() &&
+      (a.password || '') === form.password
+    );
+    if (!acc)          { setError("Identifiant ou mot de passe incorrect."); return; }
+    if (acc.banned)    { setError("Votre compte a été banni de l'organisation."); return; }
+    if (!acc.approved) { setError("Votre demande est en attente de validation par un administrateur."); return; }
     setError(""); onLogin(acc);
   };
 
@@ -1450,19 +1454,28 @@ function PagePermissions({ accounts, setAccounts, pendingAccounts, setPendingAcc
   };
 
   const approveReq = async (req) => {
-    const init = ((req.prenomRP||"?")[0]+(req.nomRP||"?")[0]).toUpperCase();
+    const init = ((req.prenomRP||req.nomRP||"?")[0]+(req.nomRP||"?").split(" ").pop()[0]).toUpperCase();
     const colors = ["#b45309","#15803d","#7e22ce","#0e7490","#9f1239","#4338ca","#be185d","#0f766e"];
     const newAcc = {
-      username:req.username, password:req.password,
-      nomRP:req.nomRP, prenomRP:req.prenomRP||req.nomRP,
-      grade:"Prospecto", init, color:colors[Math.floor(Math.random()*colors.length)],
-      isAdmin:false, online:false, banned:false, approved:true, perms:{},
+      username: req.username,
+      password: req.password,
+      nomRP: req.nomRP,
+      prenomRP: req.prenomRP || req.nomRP,
+      grade: "Prospecto",
+      init,
+      color: colors[Math.floor(Math.random()*colors.length)],
+      isAdmin: false,
+      online: false,
+      banned: false,
+      approved: true,
+      perms: {},
     };
+    // Insérer dans Supabase
     const inserted = await dbInsert('accounts', newAcc);
-    if (inserted) setAccountsS(p=>[...p, inserted]);
-    // Supprimer la demande
+    if (inserted) setAccountsS(p => [...p, inserted]);
+    // Supprimer la demande de pending_accounts
     if (req._dbId) await dbDelete('pending_accounts', req._dbId);
-    setPendingS(p=>p.filter(x=>x._dbId!==req._dbId));
+    setPendingS(p => p.filter(x => x._dbId !== req._dbId));
   };
   const rejectReq  = async (id) => { 
     const req = pendingAccounts.find(x=>x._dbId===id||x.id===id);
