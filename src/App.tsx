@@ -1,5 +1,42 @@
 // @ts-nocheck
 import { useState, useEffect, useRef } from "react";
+import { createClient } from '@supabase/supabase-js';
+
+// ── Supabase ────────────────────────────────────────────────────
+const SUPABASE_URL  = 'https://eerndfvsddwbsfideqli.supabase.co';
+const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlcm5kZnZzZGR3YnNmaWRlcWxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc0MDQ3MDUsImV4cCI6MjA2Mjk4MDcwNX0.Bq3Q2w7YkjZwNfM5P3lXvR9sT1uVoWdCpJmKnEaHgIy';
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+async function dbAll(table) {
+  const { data, error } = await sb.from(table).select('*').order('id');
+  if (error) { console.error(table, error); return []; }
+  return data.map(r => ({ ...r.data, _dbId: r.id }));
+}
+async function dbInsert(table, obj) {
+  const { data, error } = await sb.from(table).insert({ data: obj }).select().single();
+  if (error) { console.error(table, error); return null; }
+  return { ...data.data, _dbId: data.id };
+}
+async function dbUpdate(table, dbId, obj) {
+  const { error } = await sb.from(table).update({ data: obj }).eq('id', dbId);
+  if (error) console.error(table, error);
+}
+async function dbDelete(table, dbId) {
+  const { error } = await sb.from(table).delete().eq('id', dbId);
+  if (error) console.error(table, error);
+}
+async function dbGetSetting(key) {
+  const { data } = await sb.from('settings').select('*');
+  if (!data) return null;
+  const row = data.find(r => r.data?.key === key);
+  return row ? row.data.value : null;
+}
+async function dbSetSetting(key, value) {
+  const { data } = await sb.from('settings').select('*');
+  const row = data?.find(r => r.data?.key === key);
+  if (row) await sb.from('settings').update({ data: { key, value } }).eq('id', row.id);
+  else await sb.from('settings').insert({ data: { key, value } });
+}
 
 // ═══════════════════════════════════════════════════════════════
 // PALETTE
@@ -1412,23 +1449,41 @@ function PagePermissions({ accounts, setAccounts, pendingAccounts, setPendingAcc
     setSaved(true); setTimeout(()=>setSaved(false),2000);
   };
 
-  const approveReq = req => {
+  const approveReq = async (req) => {
     const init = ((req.prenomRP||"?")[0]+(req.nomRP||"?")[0]).toUpperCase();
     const colors = ["#b45309","#15803d","#7e22ce","#0e7490","#9f1239","#4338ca","#be185d","#0f766e"];
     const newAcc = {
-      id:Date.now(), username:req.username, password:req.password,
+      username:req.username, password:req.password,
       nomRP:req.nomRP, prenomRP:req.prenomRP||req.nomRP,
       grade:"Prospecto", init, color:colors[Math.floor(Math.random()*colors.length)],
-      isAdmin:false, online:false, banned:false, approved:true,
-      perms:{},
+      isAdmin:false, online:false, banned:false, approved:true, perms:{},
     };
-    setAccounts(p=>[...p,newAcc]);
-    setPendingAccounts(p=>p.filter(x=>x.id!==req.id));
+    const inserted = await dbInsert('accounts', newAcc);
+    if (inserted) setAccountsS(p=>[...p, inserted]);
+    // Supprimer la demande
+    if (req._dbId) await dbDelete('pending_accounts', req._dbId);
+    setPendingS(p=>p.filter(x=>x._dbId!==req._dbId));
   };
-  const rejectReq  = id => setPendingAccounts(p=>p.filter(x=>x.id!==id));
-  const banAcc     = id => setAccounts(p=>p.map(a=>a.id===id?{...a,banned:true,isAdmin:false}:a));
-  const unbanAcc   = id => setAccounts(p=>p.map(a=>a.id===id?{...a,banned:false}:a));
-  const deleteAcc  = id => setAccounts(p=>p.filter(a=>a.id!==id));
+  const rejectReq  = async (id) => { 
+    const req = pendingAccounts.find(x=>x._dbId===id||x.id===id);
+    if (req?._dbId) await dbDelete('pending_accounts', req._dbId);
+    setPendingS(p=>p.filter(x=>x._dbId!==id&&x.id!==id)); 
+  };
+  const banAcc = async (id) => { 
+    const acc = accounts.find(a=>a._dbId===id||a.id===id);
+    if (acc?._dbId) await dbUpdate('accounts', acc._dbId, {...acc, banned:true, isAdmin:false});
+    setAccountsS(p=>p.map(a=>a._dbId===id||a.id===id?{...a,banned:true,isAdmin:false}:a)); 
+  };
+  const unbanAcc = async (id) => { 
+    const acc = accounts.find(a=>a._dbId===id||a.id===id);
+    if (acc?._dbId) await dbUpdate('accounts', acc._dbId, {...acc, banned:false});
+    setAccountsS(p=>p.map(a=>a._dbId===id||a.id===id?{...a,banned:false}:a)); 
+  };
+  const deleteAcc = async (id) => { 
+    const acc = accounts.find(a=>a._dbId===id||a.id===id);
+    if (acc?._dbId) await dbDelete('accounts', acc._dbId);
+    setAccountsS(p=>p.filter(a=>a._dbId!==id&&a.id!==id)); 
+  };
 
   return (
     <div style={{ display:"flex",flexDirection:"column",gap:20 }}>
@@ -1580,40 +1635,194 @@ function PagePermissions({ accounts, setAccounts, pendingAccounts, setPendingAcc
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ROOT APP
+// ROOT APP — Supabase persistent
 // ═══════════════════════════════════════════════════════════════
 export default function App() {
-  const [loggedIn,setLoggedIn]     = useState(false);
-  const [me,setMe]                 = useState(null);
-  const [page,setPage]             = useState("accueil");
+  const [loggedIn,setLoggedIn] = useState(false);
+  const [me,setMe]             = useState(null);
+  const [page,setPage]         = useState("accueil");
+  const [loading,setLoading]   = useState(true);
 
-  const [accounts,setAccounts]             = useState(INIT_ACCOUNTS);
-  const [pendingAccounts,setPendingAccounts] = useState(INIT_PENDING);
-  const [recrutementOuvert,setRecrutementOuvert] = useState(true);
+  const [accounts,setAccountsS]         = useState([]);
+  const [pendingAccounts,setPendingS]   = useState([]);
+  const [recrutementOuvert,setRecrutS]  = useState(true);
+  const [weapons,setWeaponsS]           = useState([]);
+  const [tools,setToolsS]               = useState([]);
+  const [cotas,setCotasS]               = useState([]);
+  const [compta,setComptaS]             = useState([]);
+  const [rapports,setRapportsS]         = useState([]);
+  const [clips,setClipsS]               = useState([]);
+  const [fondsOrg,setFondsOrgS]         = useState(0);
+  const [radio,setRadioS]               = useState("147.850");
 
-  const [weapons, setWeapons]   = useState(INIT_WEAPONS);
-  const [tools,   setTools]     = useState(INIT_TOOLS);
-  const [cotas,   setCotas]     = useState(INIT_COTAS);
-  const [compta,  setCompta]    = useState(INIT_COMPTA);
-  const [rapports,setRapports]  = useState(INIT_RAPPORTS);
-  const [clips,   setClips]     = useState(INIT_CLIPS);
-  const [fondsOrg,setFondsOrg]  = useState(0);
-  const [radio,   setRadio]     = useState("147.850");
+  // ── Chargement initial depuis Supabase ──────────────────────
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const [accs, pend, weps, tls, cots, comp, raps, cls] = await Promise.all([
+        dbAll('accounts'), dbAll('pending_accounts'), dbAll('weapons'),
+        dbAll('tools'), dbAll('cotas'), dbAll('compta'),
+        dbAll('rapports'), dbAll('clips'),
+      ]);
 
-  // Always sync me with latest account data
-  const meSync = me ? (accounts.find(a=>a.id===me.id)||me) : me;
+      // Si aucun compte admin, créer le compte fondateur
+      if (accs.length === 0) {
+        const admin = await dbInsert('accounts', {
+          id:1, username:"juangarcia9", password:"abdelm14",
+          nomRP:"Juan Garcia", prenomRP:"Juan", grade:"El Jefe",
+          init:"JG", color:"#b45309", isAdmin:true, online:false,
+          banned:false, approved:true,
+          perms:{members:true,armes:true,outils:true,compta:true,radio:true,rapports:true,clips:true},
+        });
+        setAccountsS([admin]);
+      } else {
+        setAccountsS(accs);
+      }
 
-  const handleLogin  = acc => { setMe(acc); setLoggedIn(true); };
-  const handleLogout = ()  => { setMe(null); setLoggedIn(false); setPage("accueil"); };
+      setPendingS(pend);
+      setWeaponsS(weps);
+      setToolsS(tls);
+      setCotasS(cots);
+      setComptaS(comp);
+      setRapportsS(raps);
+      setClipsS(cls);
 
+      const recr  = await dbGetSetting('recrutement');
+      const radio = await dbGetSetting('radio');
+      const fonds = await dbGetSetting('fondsOrg');
+      if (recr  !== null) setRecrutS(recr);
+      if (radio !== null) setRadioS(radio);
+      if (fonds !== null) setFondsOrgS(Number(fonds));
+
+      setLoading(false);
+    }
+    load();
+  }, []);
+
+  // ── Wrappers qui sync Supabase ───────────────────────────────
+  const setAccounts = async (fn) => {
+    const next = typeof fn === 'function' ? fn(accounts) : fn;
+    setAccountsS(next);
+    // sync chaque compte modifié
+    for (const acc of next) {
+      if (acc._dbId) await dbUpdate('accounts', acc._dbId, acc);
+    }
+  };
+
+  const setPendingAccounts = async (fn) => {
+    const prev = pendingAccounts;
+    const next = typeof fn === 'function' ? fn(prev) : fn;
+    setPendingS(next);
+    const removed = prev.filter(p => !next.find(n => n._dbId === p._dbId));
+    for (const r of removed) if (r._dbId) await dbDelete('pending_accounts', r._dbId);
+    const added = next.filter(n => !n._dbId);
+    for (const a of added) { const r = await dbInsert('pending_accounts', a); if(r) setPendingS(p=>[...p.filter(x=>x!==a),r]); }
+  };
+
+  const setWeapons = async (fn) => {
+    const prev = weapons; const next = typeof fn === 'function' ? fn(prev) : fn;
+    setWeaponsS(next);
+    const removed = prev.filter(p=>!next.find(n=>n._dbId===p._dbId));
+    for (const r of removed) if(r._dbId) await dbDelete('weapons',r._dbId);
+    const added = next.filter(n=>!n._dbId);
+    for (const a of added) { const r=await dbInsert('weapons',a); if(r) setWeaponsS(p=>[...p.filter(x=>x!==a),r]); }
+  };
+
+  const setTools = async (fn) => {
+    const prev = tools; const next = typeof fn === 'function' ? fn(prev) : fn;
+    setToolsS(next);
+    const removed = prev.filter(p=>!next.find(n=>n._dbId===p._dbId));
+    for (const r of removed) if(r._dbId) await dbDelete('tools',r._dbId);
+    const added = next.filter(n=>!n._dbId);
+    for (const a of added) { const r=await dbInsert('tools',a); if(r) setToolsS(p=>[...p.filter(x=>x!==a),r]); }
+  };
+
+  const setCotas = async (fn) => {
+    const prev = cotas; const next = typeof fn === 'function' ? fn(prev) : fn;
+    setCotasS(next);
+    const removed = prev.filter(p=>!next.find(n=>n._dbId===p._dbId));
+    for (const r of removed) if(r._dbId) await dbDelete('cotas',r._dbId);
+    const added = next.filter(n=>!n._dbId);
+    for (const a of added) { const r=await dbInsert('cotas',a); if(r) setCotasS(p=>[...p.filter(x=>x!==a),r]); }
+    // update status
+    const updated = next.filter(n=>n._dbId&&prev.find(p=>p._dbId===n._dbId&&p.status!==n.status));
+    for (const u of updated) await dbUpdate('cotas',u._dbId,u);
+  };
+
+  const setCompta = async (fn) => {
+    const prev = compta; const next = typeof fn === 'function' ? fn(prev) : fn;
+    setComptaS(next);
+    const added = next.filter(n=>!n._dbId);
+    for (const a of added) { const r=await dbInsert('compta',a); if(r) setComptaS(p=>[...p.filter(x=>x!==a),r]); }
+  };
+
+  const setRapports = async (fn) => {
+    const prev = rapports; const next = typeof fn === 'function' ? fn(prev) : fn;
+    setRapportsS(next);
+    const added = next.filter(n=>!n._dbId);
+    for (const a of added) { const r=await dbInsert('rapports',a); if(r) setRapportsS(p=>[...p.filter(x=>x!==a),r]); }
+    const updated = next.filter(n=>n._dbId&&prev.find(p=>p._dbId===n._dbId&&p.lu!==n.lu));
+    for (const u of updated) await dbUpdate('rapports',u._dbId,u);
+  };
+
+  const setClips = async (fn) => {
+    const prev = clips; const next = typeof fn === 'function' ? fn(prev) : fn;
+    setClipsS(next);
+    const added = next.filter(n=>!n._dbId);
+    for (const a of added) { const r=await dbInsert('clips',a); if(r) setClipsS(p=>[...p.filter(x=>x!==a),r]); }
+  };
+
+  const setFondsOrg = async (fn) => {
+    const next = typeof fn === 'function' ? fn(fondsOrg) : fn;
+    setFondsOrgS(next);
+    await dbSetSetting('fondsOrg', next);
+  };
+
+  const setRadio = async (val) => {
+    setRadioS(val);
+    await dbSetSetting('radio', val);
+  };
+
+  const setRecrutementOuvert = async (fn) => {
+    const next = typeof fn === 'function' ? fn(recrutementOuvert) : fn;
+    setRecrutS(next);
+    await dbSetSetting('recrutement', next);
+  };
+
+  // ── Login / Logout ──────────────────────────────────────────
+  const handleLogin = async (acc) => {
+    // Marquer online
+    if (acc._dbId) await dbUpdate('accounts', acc._dbId, { ...acc, online: true });
+    setAccountsS(p => p.map(a => a._dbId===acc._dbId ? {...a,online:true} : a));
+    setMe(acc); setLoggedIn(true);
+  };
+
+  const handleLogout = async () => {
+    if (me?._dbId) await dbUpdate('accounts', me._dbId, { ...me, online: false });
+    setAccountsS(p => p.map(a => a._dbId===me?._dbId ? {...a,online:false} : a));
+    setMe(null); setLoggedIn(false); setPage("accueil");
+  };
+
+  const meSync = me ? (accounts.find(a=>a._dbId===me._dbId)||me) : me;
   const unreadRapports = rapports.filter(r=>!r.lu).length;
+
+  // ── Loading screen ──────────────────────────────────────────
+  if (loading) return (
+    <div style={{ minHeight:"100vh", background:"#0e0e0e", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20 }}>
+      <div style={{ fontSize:60 }}>🦂</div>
+      <div style={{ color:"#f97316", fontWeight:900, fontSize:22, fontFamily:"Impact,sans-serif", letterSpacing:3 }}>LOS MALDITAS 14</div>
+      <div style={{ color:"#64748b", fontSize:14 }}>Chargement en cours...</div>
+      <div style={{ width:200, height:4, background:"#1a1a1a", borderRadius:4, overflow:"hidden" }}>
+        <div style={{ width:"60%", height:"100%", background:"#f97316", borderRadius:4, animation:"none" }}/>
+      </div>
+    </div>
+  );
 
   if (!loggedIn) return (
     <LoginPage
       accounts={accounts} setAccounts={setAccounts}
       pendingAccounts={pendingAccounts} setPendingAccounts={setPendingAccounts}
-      recrutementOuvert={recrutementOuvert}
-      onLogin={handleLogin}
+      recrutementOuvert={recrutementOuvert} onLogin={handleLogin}
     />
   );
 
