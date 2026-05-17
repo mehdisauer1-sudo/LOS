@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 
 // ── Supabase ────────────────────────────────────────────────────
 const SUPABASE_URL  = 'https://eerndfvsddwbsfideqli.supabase.co';
-const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlcm5kZnZzZGR3YnNmaWRlcWxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc0MDQ3MDUsImV4cCI6MjA2Mjk4MDcwNX0.Bq3Q2w7YkjZwNfM5P3lXvR9sT1uVoWdCpJmKnEaHgIy';
+const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVlcm5kZnZzZGR3YnNmaWRlcWxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkwMTY1NjksImV4cCI6MjA5NDU5MjU2OX0.LdQ6GQ-fovm8LyupwcqYTuwKKOfrubAcXHboY1tjgxo';
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 async function dbAll(table) {
